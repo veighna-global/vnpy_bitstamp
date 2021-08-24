@@ -6,12 +6,14 @@ import uuid
 from copy import copy
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-from typing import Dict, Any
+from typing import Dict, Any, List
 import pytz
 
 import requests
 
 from vnpy.api.rest import Request, RestClient, RequestStatus
+from requests import Response
+# from vnpy_rest import RestClient, Request, Response
 from vnpy_websocket import WebsocketClient
 
 from vnpy.trader.constant import (
@@ -37,6 +39,7 @@ from vnpy.trader.object import (
 )
 
 from vnpy.trader.event import EVENT_TIMER
+from vnpy.event import Event, EventEngine
 
 # UTC时区
 UTC_TZ = pytz.utc
@@ -84,16 +87,16 @@ class BitstampGateway(BaseGateway):
         "代理端口": 0,
     }
 
-    exchanges = [Exchange.BITSTAMP]
+    exchanges: Exchange = [Exchange.BITSTAMP]
 
-    def __init__(self, event_engine):
-        """Constructor"""
-        super().__init__(event_engine, "BITSTAMP")
+    def __init__(self, event_engine: EventEngine, gateway_name: str = "BITSTAMP") -> None:
+        """构造函数"""
+        super().__init__(event_engine, gateway_name)
 
-        self.order_manager = LocalOrderManager(self)
+        self.order_manager: LocalOrderManager = LocalOrderManager(self)
 
-        self.rest_api = BitstampRestApi(self)
-        self.ws_api = BitstampWebsocketApi(self)
+        self.rest_api: "BitstampRestApi" = BitstampRestApi(self)
+        self.ws_api: "BitstampWebsocketApi" = BitstampWebsocketApi(self)
 
     def connect(self, setting: dict):
         """连接交易接口"""
@@ -108,43 +111,43 @@ class BitstampGateway(BaseGateway):
 
         self.event_engine.register(EVENT_TIMER, self.process_timer_event)
 
-    def subscribe(self, req: SubscribeRequest):
-        """"""
+    def subscribe(self, req: SubscribeRequest) -> None:
+        """订阅行情"""
         self.ws_api.subscribe(req)
 
-    def send_order(self, req: OrderRequest):
-        """"""
+    def send_order(self, req: OrderRequest) -> str:
+        """委托下单"""
         return self.rest_api.send_order(req)
 
-    def cancel_order(self, req: CancelRequest):
-        """"""
+    def cancel_order(self, req: CancelRequest) -> None:
+        """委托撤单"""
         self.rest_api.cancel_order(req)
 
-    def query_account(self):
-        """"""
+    def query_account(self) -> None:
+        """查询资金"""
         pass
 
-    def query_position(self):
-        """"""
+    def query_position(self) -> None:
+        """查询持仓"""
         pass
 
-    def query_history(self, req: HistoryRequest):
-        """"""
-        history = []
-        limit = 1000
-        step = INTERVAL_VT2BITSTAMP[req.interval]
-        base = req.symbol[:3].upper()
-        quote = req.symbol[3:].upper()
-        start_time = int(datetime.timestamp(req.start))
+    def query_history(self, req: HistoryRequest) -> List[BarData]:
+        """查询历史数据"""
+        history: List[BarData] = []
+        limit: int = 1000
+        step: int = INTERVAL_VT2BITSTAMP[req.interval]
+        base: str = req.symbol[:3].upper()
+        quote: str = req.symbol[3:].upper()
+        start_time: int = int(datetime.timestamp(req.start))
 
         while True:
-            # Calculate end time and check if download task finished
-            end_time = start_time + INTERVAL_VT2BITSTAMP[req.interval] * limit
+            # 如果收到了最后一批数据则终止循环
+            end_time: int = start_time + INTERVAL_VT2BITSTAMP[req.interval] * limit
             if int(datetime.timestamp(req.end)) < end_time:
                 break
 
-            # Create query params
-            params = {
+            # 创建查询参数
+            params: dict = {
                 "exchange": "bitstamp",
                 "base": base,
                 "quote": quote,
@@ -153,27 +156,25 @@ class BitstampGateway(BaseGateway):
                 "scale": step
             }
 
-            # Get response from server
-            resp = requests.get(
+            resp: Response = requests.get(
                 "https://api.blockchain.info/price/bar-series",
                 params
             )
 
-            # Break if request failed with other status code
             if resp.status_code // 100 != 2:
-                msg = f"获取历史数据失败，状态码：{resp.status_code}，信息：{resp.text}"
+                msg: str = f"获取历史数据失败，状态码：{resp.status_code}，信息：{resp.text}"
                 self.write_log(msg)
                 break
             else:
-                data = resp.json()
+                data: dict = resp.json()
                 if not data:
-                    msg = f"获取历史数据为空，开始时间：{req.start}"
+                    msg: str = f"获取历史数据为空，开始时间：{req.start}"
                     self.write_log(msg)
                     break
 
-                buf = []
+                buf: List[BarData] = []
                 for d in data:
-                    bar = BarData(
+                    bar: BarData = BarData(
                         symbol=req.symbol,
                         exchange=req.exchange,
                         datetime=generate_datetime(d["start"]),
@@ -189,45 +190,43 @@ class BitstampGateway(BaseGateway):
 
                 history.extend(buf)
 
-                begin = buf[0].datetime
-                end = buf[-1].datetime
-                msg = f"获取历史数据成功，{req.symbol} - {req.interval.value}，{begin} - {end}"
+                begin: datetime = buf[0].datetime
+                end: datetime = buf[-1].datetime
+                msg: str = f"获取历史数据成功，{req.symbol} - {req.interval.value}，{begin} - {end}"
                 self.write_log(msg)
 
                 # Update start time
-                start_time = int(datetime.timestamp(end)) + INTERVAL_VT2BITSTAMP[req.interval]
+                start_time: int = int(datetime.timestamp(end)) + INTERVAL_VT2BITSTAMP[req.interval]
 
         return history
 
-    def close(self):
-        """"""
+    def close(self) -> None:
+        """关闭连接"""
         self.rest_api.stop()
         self.ws_api.stop()
 
-    def process_timer_event(self, event):
-        """"""
+    def process_timer_event(self, event: Event) -> None:
+        """定时事件处理"""
         self.rest_api.query_account()
 
 
 class BitstampRestApi(RestClient):
-    """
-    Bitstamp REST API
-    """
+    """Bitstamp的REST接口"""
 
-    def __init__(self, gateway: BaseGateway):
-        """"""
-        super(BitstampRestApi, self).__init__()
+    def __init__(self, gateway: BitstampGateway) -> None:
+        """构造函数"""
+        super().__init__()
 
-        self.gateway = gateway
-        self.gateway_name = gateway.gateway_name
-        self.order_manager = gateway.order_manager
+        self.gateway: BitstampGateway = gateway
+        self.gateway_name: str = gateway.gateway_name
+        self.order_manager: LocalOrderManager = gateway.order_manager
 
-        self.key = ""
-        self.secret = ""
-        self.username = "qxfe9863"
+        self.key: str = ""
+        self.secret: str  = ""
+        self.username: str = "qxfe9863"
 
-        self.order_count = 1_000_000
-        self.connect_time = 0
+        self.order_count: int = 1000000
+        self.connect_time: int = 0
 
     def connect(
         self,
@@ -236,10 +235,8 @@ class BitstampRestApi(RestClient):
         username: str,
         proxy_host: str,
         proxy_port: int,
-    ):
-        """
-        Initialize connection to REST server.
-        """
+    ) -> None:
+        """连接REST服务器"""
         self.key = key
         self.secret = secret.encode()
         self.username = username
