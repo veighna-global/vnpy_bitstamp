@@ -246,7 +246,7 @@ class BitstampRestApi(RestClient):
         )
 
         self.init(REST_HOST, proxy_host, proxy_port)
-        self.start(3)
+        self.start()
 
         self.gateway.write_log("REST API启动成功")
 
