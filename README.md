@@ -42,9 +42,7 @@ from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.ui import MainWindow, create_qapp
 
-from vnpy_bitstamp import (
-    BitstampGateway
-)
+from vnpy_bitstamp import BitstampGateway
 
 
 def main():
