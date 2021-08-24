@@ -83,7 +83,6 @@ class BitstampGateway(BaseGateway):
     default_setting: Dict[str, Any] = {
         "key": "",
         "secret": "",
-        "username": "",
         "代理地址": "",
         "代理端口": 0,
     }
@@ -103,11 +102,10 @@ class BitstampGateway(BaseGateway):
         """连接交易接口"""
         key: str = setting["key"]
         secret: str = setting["secret"]
-        username: str = setting["username"]
         proxy_host: str = setting["代理地址"]
         proxy_port: int = setting["代理端口"]
 
-        self.rest_api.connect(key, secret, username, proxy_host, proxy_port)
+        self.rest_api.connect(key, secret, proxy_host, proxy_port)
         self.ws_api.connect(proxy_host, proxy_port)
 
         self.event_engine.register(EVENT_TIMER, self.process_timer_event)
@@ -224,7 +222,6 @@ class BitstampRestApi(RestClient):
 
         self.key: str = ""
         self.secret: str  = ""
-        self.username: str = "qxfe9863"
 
         self.order_count: int = 1000000
         self.connect_time: int = 0
@@ -233,14 +230,12 @@ class BitstampRestApi(RestClient):
         self,
         key: str,
         secret: str,
-        username: str,
         proxy_host: str,
         proxy_port: int,
     ) -> None:
         """连接REST服务器"""
         self.key = key
         self.secret = secret.encode()
-        self.username = username
 
         self.connect_time = (
             int(datetime.now(UTC_TZ).strftime("%y%m%d%H%M%S")) * self.order_count
