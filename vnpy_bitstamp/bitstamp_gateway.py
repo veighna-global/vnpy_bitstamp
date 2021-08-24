@@ -15,6 +15,7 @@ from vnpy.api.rest import Request, RestClient, RequestStatus
 from requests import Response
 # from vnpy_rest import RestClient, Request, Response
 from vnpy_websocket import WebsocketClient
+from vnpy.api.websocket import WebsocketClient
 
 from vnpy.trader.constant import (
     Direction,
@@ -253,25 +254,22 @@ class BitstampRestApi(RestClient):
         self.query_contract()
         self.query_account()
 
-    def sign(self, request: Request):
-        """
-        Sign Bitstamp request.
-        """
+    def sign(self, request: Request) -> Request:
+        """生成Bitstamp签名"""
         if request.method == "GET":
             return request
 
-        timestamp = str(int(round(time.time() * 1000)))
-        nonce = str(uuid.uuid4())
-        content_type = "application/x-www-form-urlencoded"
+        timestamp: str = str(int(round(time.time() * 1000)))
+        nonce: str = str(uuid.uuid4())
+        content_type: str = "application/x-www-form-urlencoded"
 
-        # Empty post data leads to API0020 error,
-        # so use this offset dict instead.
+        # 传入offset字典，避免传入空data导致200报错
         if not request.data:
             request.data = {"offset": "1"}
 
-        payload_str = urlencode(request.data)
+        payload_str: str = urlencode(request.data)
 
-        message = "BITSTAMP " + self.key + \
+        message: str = "BITSTAMP " + self.key + \
             request.method + \
             "www.bitstamp.net/api/v2" + \
             request.path + \
@@ -281,9 +279,9 @@ class BitstampRestApi(RestClient):
             timestamp + \
             "v2" + \
             payload_str
-        message = message.encode("utf-8")
+        message: bytes = message.encode("utf-8")
 
-        signature = hmac.new(
+        signature: bytes = hmac.new(
             self.secret,
             msg=message,
             digestmod=hashlib.sha256
@@ -347,27 +345,90 @@ class BitstampRestApi(RestClient):
             else:
                 self.on_error(t, v, tb, request)
 
-    def query_order(self):
-        """"""
-        path = "/open_orders/all/"
+    def query_order(self) -> None:
+        """查询未成交委托"""
+        self.add_request(
+            method="POST",
+            path="/open_orders/all/",
+            callback=self.on_query_order
+        )
+
+    def query_account(self) -> None:
+        """查询资金"""
+        self.add_request(
+            method="POST",
+            path="/balance/",
+            callback=self.on_query_account
+        )
+
+    def query_contract(self) -> None:
+        """查询合约信息"""
+        self.add_request(
+            method="GET",
+            path="/trading-pairs-info/",
+            callback=self.on_query_contract,
+        )
+
+    def cancel_order(self, req: CancelRequest) -> None:
+        """委托撤单"""
+        sys_orderid: str = self.order_manager.get_sys_orderid(req.orderid)
+
+        data: dict = {"id": sys_orderid}
+
+        self.add_request(
+            method="POST",
+            path="/cancel_order/",
+            data=data,
+            callback=self.on_cancel_order,
+            extra=req
+        )
+
+    def send_order(self, req: OrderRequest) -> str:
+        """委托下单"""
+        local_orderid: str = self.order_manager.new_local_orderid()
+        order: OrderData = req.create_order_data(
+            local_orderid,
+            self.gateway_name
+        )
+        order.datetime = datetime.now(UTC_TZ)
+
+        data: dict = {
+            "amount": req.volume,
+            "price": req.price
+        }
+
+        if req.direction == Direction.LONG:
+            if req.type == OrderType.LIMIT:
+                path: str = f"/buy/{req.symbol}/"
+            elif req.type == OrderType.MARKET:
+                path: str = f"/buy/market/{req.symbol}/"
+        else:
+            if req.type == OrderType.LIMIT:
+                path: str = f"/sell/{req.symbol}/"
+            elif req.type == OrderType.MARKET:
+                path: str = f"/sell/market/{req.symbol}/"
 
         self.add_request(
             method="POST",
             path=path,
-            callback=self.on_query_order
+            data=data,
+            callback=self.on_send_order,
+            extra=order,
         )
+        self.order_manager.on_order(order)
+        return order.vt_orderid
 
-    def on_query_order(self, data, request):
-        """获取委托订单"""
+    def on_query_order(self, data: dict, request: Request) -> None:
+        """未成交委托查询回报"""
         for d in data:
-            sys_orderid = d["id"]
-            local_orderid = self.order_manager.get_local_orderid(sys_orderid)
+            sys_orderid: str = d["id"]
+            local_orderid: str = self.order_manager.get_local_orderid(sys_orderid)
 
-            direction = DIRECTION_BITSTAMP2VT[d["type"]]
-            name = d["currency_pair"]
-            symbol = name_symbol_map[name]
+            direction: Direction = DIRECTION_BITSTAMP2VT[d["type"]]
+            name: str = d["currency_pair"]
+            symbol: str = name_symbol_map[name]
 
-            order = OrderData(
+            order: OrderData = OrderData(
                 orderid=local_orderid,
                 symbol=symbol,
                 exchange=Exchange.BITSTAMP,
@@ -383,24 +444,14 @@ class BitstampRestApi(RestClient):
 
         self.gateway.write_log("委托信息查询成功")
 
-    def query_account(self):
-        """"""
-        path = "/balance/"
-
-        self.add_request(
-            method="POST",
-            path=path,
-            callback=self.on_query_account
-        )
-
-    def on_query_account(self, data, request):
-        """"""
+    def on_query_account(self, data: dict, request: Request) -> None:
+        """资金查询回报"""
         for key in data.keys():
             if "balance" not in key:
                 continue
-            currency = key.replace("_balance", "")
+            currency: str = key.replace("_balance", "")
 
-            account = AccountData(
+            account: AccountData = AccountData(
                 accountid=currency,
                 balance=float(data[currency + "_balance"]),
                 frozen=float(data[currency + "_reserved"]),
@@ -408,21 +459,13 @@ class BitstampRestApi(RestClient):
             )
             self.gateway.on_account(account)
 
-    def query_contract(self):
-        """"""
-        self.add_request(
-            method="GET",
-            path="/trading-pairs-info/",
-            callback=self.on_query_contract,
-        )
-
-    def on_query_contract(self, data, request):
-        """"""
+    def on_query_contract(self, data: dict, request: Request) -> None:
+        """合约信息查询回报"""
         for d in data:
-            pricetick = 1 / pow(10, d["counter_decimals"])
-            min_volume = 1 / pow(10, d["base_decimals"])
+            pricetick: float = 1 / pow(10, d["counter_decimals"])
+            min_volume: float = 1 / pow(10, d["base_decimals"])
 
-            contract = ContractData(
+            contract: ContractData = ContractData(
                 symbol=d["url_symbol"],
                 exchange=Exchange.BITSTAMP,
                 name=d["name"],
@@ -442,32 +485,16 @@ class BitstampRestApi(RestClient):
 
         self.query_order()
 
-    def cancel_order(self, req: CancelRequest):
-        """"""
-        path = "/cancel_order/"
-
-        sys_orderid = self.order_manager.get_sys_orderid(req.orderid)
-
-        data = {"id": sys_orderid}
-
-        self.add_request(
-            method="POST",
-            path=path,
-            data=data,
-            callback=self.on_cancel_order,
-            extra=req
-        )
-
-    def on_cancel_order(self, data, request):
-        """"""
-        error = data.get("error", "")
+    def on_cancel_order(self, data: dict, request: Request) -> None:
+        """委托撤单回报"""
+        error: str = data.get("error", "")
         if error:
             self.gateway.write_log(error)
             return
 
-        cancel_request = request.extra
-        local_orderid = cancel_request.orderid
-        order = self.order_manager.get_order_with_local_orderid(local_orderid)
+        cancel_request: CancelRequest = request.extra
+        local_orderid: str = cancel_request.orderid
+        order: OrderData = self.order_manager.get_order_with_local_orderid(local_orderid)
 
         if order.is_active:
             order.status = Status.CANCELLED
@@ -475,60 +502,25 @@ class BitstampRestApi(RestClient):
 
         self.gateway.write_log(f"撤单成功：{order.orderid}")
 
-    def on_cancel_order_error(self, data, request):
-        """"""
-        error_msg = data["error"]
+    def on_cancel_order_error(self, data, request) -> None:
+        """委托撤单回报函数报错回报"""
+        error_msg: str = data["error"]
         self.gateway.write_log(f"撤单请求出错，信息：{error_msg}")
 
-    def send_order(self, req: OrderRequest):
-        """"""
-        local_orderid = self.order_manager.new_local_orderid()
-        order = req.create_order_data(
-            local_orderid,
-            self.gateway_name
-        )
-        order.datetime = datetime.now(UTC_TZ)
+    def on_send_order(self, data: dict, request: Request) -> None:
+        """委托下单回报"""
+        order: OrderData = request.extra
 
-        data = {
-            "amount": req.volume,
-            "price": req.price
-        }
-
-        if req.direction == Direction.LONG:
-            if req.type == OrderType.LIMIT:
-                path = f"/buy/{req.symbol}/"
-            elif req.type == OrderType.MARKET:
-                path = f"/buy/market/{req.symbol}/"
-        else:
-            if req.type == OrderType.LIMIT:
-                path = f"/sell/{req.symbol}/"
-            elif req.type == OrderType.MARKET:
-                path = f"/sell/market/{req.symbol}/"
-
-        self.add_request(
-            method="POST",
-            path=path,
-            data=data,
-            callback=self.on_send_order,
-            extra=order,
-        )
-        self.order_manager.on_order(order)
-        return order.vt_orderid
-
-    def on_send_order(self, data, request):
-        """"""
-        order = request.extra
-
-        status = data.get("status", None)
+        status: str = data.get("status", None)
         if status and status == "error":
             order.status = Status.REJECTED
             self.order_manager.on_order(order)
 
-            msg = data["reason"]["__all__"][0]
+            msg: str = data["reason"]["__all__"][0]
             self.gateway.write_log(msg)
             return
 
-        sys_orderid = data["id"]
+        sys_orderid: str = data["id"]
         self.order_manager.update_orderid_map(order.orderid, sys_orderid)
 
         order.status = Status.NOTTRADED
@@ -536,32 +528,25 @@ class BitstampRestApi(RestClient):
 
     def on_send_order_error(
         self, exception_type: type, exception_value: Exception, tb, request: Request
-    ):
-        """
-        Callback when sending order caused exception.
-        """
-        # Record exception if not ConnectionError
+    ) -> None:
+        """委托下单回报函数报错回报"""
         if not issubclass(exception_type, ConnectionError):
             self.on_error(exception_type, exception_value, tb, request)
 
-    def on_failed(self, status_code: int, request: Request):
-        """
-        Callback to handle request failed.
-        """
-        data = request.response.json()
-        reason = data["reason"]
-        code = data["code"]
+    def on_failed(self, status_code: int, request: Request) -> None:
+        """请求失败的默认回调"""
+        data: dict = request.response.json()
+        reason: str = data["reason"]
+        code: int = data["code"]
 
-        msg = f"{request.path} 请求失败，状态码：{status_code}，错误信息：{reason}，错误代码: {code}"
+        msg: str = f"{request.path} 请求失败，状态码：{status_code}，错误信息：{reason}，错误代码: {code}"
         self.gateway.write_log(msg)
 
     def on_error(
         self, exception_type: type, exception_value: Exception, tb, request: Request
-    ):
-        """
-        Callback to handler request exception.
-        """
-        msg = f"触发异常，状态码：{exception_type}，信息：{exception_value}"
+    ) -> None:
+        """请求触发异常的回调"""
+        msg: str = f"触发异常，状态码：{exception_type}，信息：{exception_value}"
         self.gateway.write_log(msg)
 
         sys.stderr.write(
@@ -570,39 +555,40 @@ class BitstampRestApi(RestClient):
 
 
 class BitstampWebsocketApi(WebsocketClient):
-    """"""
+    """Bitstamp的Websocket接口"""
 
-    def __init__(self, gateway):
-        """"""
+    def __init__(self, gateway: BitstampGateway) -> None:
+        """构造函数"""
         super().__init__()
 
-        self.gateway = gateway
-        self.gateway_name = gateway.gateway_name
-        self.order_manager = gateway.order_manager
+        self.gateway: BitstampGateway = gateway
+        self.gateway_name: str = gateway.gateway_name
+        self.order_manager: LocalOrderManager = gateway.order_manager
 
         self.subscribed: Dict[str, SubscribeRequest] = {}
         self.ticks: Dict[str, TickData] = {}
 
-    def connect(self, proxy_host: str, proxy_port: int):
-        """"""
+    def connect(self, proxy_host: str, proxy_port: int) -> None:
+        """连接Websocket交易频道"""
         self.init(WEBSOCKET_HOST, proxy_host, proxy_port)
         self.start()
 
-    def on_connected(self):
-        """"""
+    def on_connected(self) -> None:
+        """连接成功回报"""
         self.gateway.write_log("Websocket API连接成功")
 
-        # Auto re-subscribe market data after reconnected
         for req in self.subscribed.values():
             self.subscribe(req)
 
-    def subscribe(self, req: SubscribeRequest):
-        """"""
+    def subscribe(self, req: SubscribeRequest) -> None:
+        """订阅行情"""
+        # 缓存订阅记录
         self.subscribed[req.symbol] = req
         if not self._active:
             return
 
-        tick = TickData(
+        # 创建TICK对象
+        tick: TickData = TickData(
             symbol=req.symbol,
             name=symbol_name_map.get(req.symbol, ""),
             exchange=Exchange.BITSTAMP,
@@ -615,8 +601,8 @@ class BitstampWebsocketApi(WebsocketClient):
             "live_trades_",
             "live_orders_"
         ]:
-            channel = f"{prefix}{req.symbol}"
-            d = {
+            channel: str = f"{prefix}{req.symbol}"
+            d: dict = {
                 "event": "bts:subscribe",
                 "data": {
                     "channel": channel
@@ -625,9 +611,9 @@ class BitstampWebsocketApi(WebsocketClient):
             self.ticks[channel] = tick
             self.send_packet(d)
 
-    def on_packet(self, packet):
-        """"""
-        event = packet["event"]
+    def on_packet(self, packet: dict) -> None:
+        """推送数据回报"""
+        event: str = packet["event"]
 
         if event == "trade":
             self.on_market_trade(packet)
@@ -636,28 +622,28 @@ class BitstampWebsocketApi(WebsocketClient):
         elif "order_" in event:
             self.on_market_order(packet)
         elif event == "bts:request_reconnect":
-            self._disconnect()      # Server requires to reconnect
+            self._disconnect()
 
     def on_market_trade(self, packet):
-        """"""
-        channel = packet["channel"]
-        data = packet["data"]
+        """成交信息推送"""
+        channel: str = packet["channel"]
+        data: dict = packet["data"]
 
-        tick = self.ticks[channel]
+        tick: TickData = self.ticks[channel]
         tick.last_price = data["price"]
         tick.last_volume = data["amount"]
 
-        dt = datetime.fromtimestamp(int(data["timestamp"]))
+        dt: datetime = datetime.fromtimestamp(int(data["timestamp"]))
         tick.datetime = UTC_TZ.localize(dt)
 
         self.gateway.on_tick(copy(tick))
 
-        # Order status check
-        buy_orderid = str(data["buy_order_id"])
-        sell_orderid = str(data["sell_order_id"])
+        # 委托状态检查
+        buy_orderid: str = str(data["buy_order_id"])
+        sell_orderid: str = str(data["sell_order_id"])
 
         for sys_orderid in [buy_orderid, sell_orderid]:
-            order = self.order_manager.get_order_with_sys_orderid(
+            order: OrderData = self.order_manager.get_order_with_sys_orderid(
                 sys_orderid)
 
             if order:
@@ -670,7 +656,7 @@ class BitstampWebsocketApi(WebsocketClient):
 
                 self.order_manager.on_order(copy(order))
 
-                trade = TradeData(
+                trade: TradeData = TradeData(
                     symbol=order.symbol,
                     exchange=order.exchange,
                     orderid=order.orderid,
@@ -683,18 +669,18 @@ class BitstampWebsocketApi(WebsocketClient):
                 )
                 self.gateway.on_trade(trade)
 
-    def on_market_depth(self, packet):
-        """"""
-        channel = packet["channel"]
-        data = packet["data"]
+    def on_market_depth(self, packet: dict) -> None:
+        """行情深度推送"""
+        channel: str = packet["channel"]
+        data: dict = packet["data"]
 
-        tick = self.ticks[channel]
+        tick: TickData = self.ticks[channel]
 
-        dt = datetime.fromtimestamp(int(data["timestamp"]))
+        dt: datetime = datetime.fromtimestamp(int(data["timestamp"]))
         tick.datetime = UTC_TZ.localize(dt)
 
-        bids = data["bids"]
-        asks = data["asks"]
+        bids: list = data["bids"]
+        asks: list = data["asks"]
 
         for n in range(5):
             ix = n + 1
@@ -709,16 +695,16 @@ class BitstampWebsocketApi(WebsocketClient):
 
         self.gateway.on_tick(copy(tick))
 
-    def on_market_order(self, packet):
-        """"""
-        event = packet["event"]
-        data = packet["data"]
+    def on_market_order(self, packet:dict) -> None:
+        """委托信息推送"""
+        event: str = packet["event"]
+        data: dict = packet["data"]
 
         if event != "order_deleted":
             return
 
-        sys_orderid = str(data["id"])
-        order = self.order_manager.get_order_with_sys_orderid(sys_orderid)
+        sys_orderid: str = str(data["id"])
+        order: OrderData = self.order_manager.get_order_with_sys_orderid(sys_orderid)
 
         if order and order.is_active():
             order.status = Status.CANCELLED
@@ -726,7 +712,7 @@ class BitstampWebsocketApi(WebsocketClient):
 
 
 def generate_datetime(timestamp: str) -> datetime:
-    """"""
-    dt = datetime.fromtimestamp(timestamp)
-    dt = UTC_TZ.localize(dt)
+    """生成时间"""
+    dt: datetime = datetime.fromtimestamp(timestamp)
+    dt: datetime = UTC_TZ.localize(dt)
     return dt
