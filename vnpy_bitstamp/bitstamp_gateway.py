@@ -14,7 +14,7 @@ import requests
 from vnpy.api.rest import Request, RestClient, RequestStatus
 from requests import Response
 # from vnpy_rest import RestClient, Request, Response
-from vnpy_websocket import WebsocketClient
+#from vnpy_websocket import WebsocketClient
 from vnpy.api.websocket import WebsocketClient
 
 from vnpy.trader.constant import (
@@ -194,7 +194,7 @@ class BitstampGateway(BaseGateway):
                 msg: str = f"获取历史数据成功，{req.symbol} - {req.interval.value}，{begin} - {end}"
                 self.write_log(msg)
 
-                # Update start time
+                # 更新开始时间
                 start_time: int = int(datetime.timestamp(end)) + INTERVAL_VT2BITSTAMP[req.interval]
 
         return history
@@ -317,7 +317,7 @@ class BitstampRestApi(RestClient):
             )
             request.response = response
             status_code = response.status_code
-            if status_code // 100 == 2:  # 2xx codes are all successful
+            if status_code // 100 == 2:
                 if status_code == 204:
                     json_body = None
                 else:
@@ -529,7 +529,7 @@ class BitstampRestApi(RestClient):
             self.on_error(exception_type, exception_value, tb, request)
 
     def on_failed(self, status_code: int, request: Request) -> None:
-        """请求失败的默认回调"""
+        """请求失败的回调"""
         data: dict = request.response.json()
         reason: str = data["reason"]
         code: int = data["code"]
@@ -564,7 +564,7 @@ class BitstampWebsocketApi(WebsocketClient):
         self.ticks: Dict[str, TickData] = {}
 
     def connect(self, proxy_host: str, proxy_port: int) -> None:
-        """连接Websocket交易频道"""
+        """连接Websocket"""
         self.init(WEBSOCKET_HOST, proxy_host, proxy_port)
         self.start()
 
@@ -619,7 +619,7 @@ class BitstampWebsocketApi(WebsocketClient):
         elif event == "bts:request_reconnect":
             self._disconnect()
 
-    def on_market_trade(self, packet):
+    def on_market_trade(self, packet: dict) -> None:
         """成交信息推送"""
         channel: str = packet["channel"]
         data: dict = packet["data"]
