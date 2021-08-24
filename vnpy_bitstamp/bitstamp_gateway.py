@@ -6,7 +6,7 @@ import uuid
 from copy import copy
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-from typing import Dict
+from typing import Dict, Any
 import pytz
 
 import requests
@@ -76,12 +76,12 @@ class BitstampGateway(BaseGateway):
     vn.py用于对接Bitstamp交易所的交易接口。
     """
 
-    default_setting = {
+    default_setting: Dict[str, Any] = {
         "key": "",
         "secret": "",
         "username": "",
-        "proxy_host": "127.0.0.1",
-        "proxy_port": 1080,
+        "代理地址": "",
+        "代理端口": 0,
     }
 
     exchanges = [Exchange.BITSTAMP]
@@ -96,12 +96,12 @@ class BitstampGateway(BaseGateway):
         self.ws_api = BitstampWebsocketApi(self)
 
     def connect(self, setting: dict):
-        """"""
-        key = setting["key"]
-        secret = setting["secret"]
-        username = setting["username"]
-        proxy_host = setting["proxy_host"]
-        proxy_port = setting["proxy_port"]
+        """连接交易接口"""
+        key: str = setting["key"]
+        secret: str = setting["secret"]
+        username: str = setting["username"]
+        proxy_host: str = setting["代理地址"]
+        proxy_port: int = setting["代理端口"]
 
         self.rest_api.connect(key, secret, username, proxy_host, proxy_port)
         self.ws_api.connect(proxy_host, proxy_port)
