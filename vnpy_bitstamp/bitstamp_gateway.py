@@ -69,8 +69,11 @@ TIMEDELTA_MAP: Dict[Interval, timedelta] = {
     Interval.DAILY: timedelta(days=1),
 }
 
-symbol_name_map = {}
-name_symbol_map = {}
+# 合约品种全局缓存字典
+symbol_name_map: Dict[str, str] = {}
+
+# 合约名称全局缓存字典
+name_symbol_map: Dict[str, str] = {}
 
 
 class BitstampGateway(BaseGateway):
