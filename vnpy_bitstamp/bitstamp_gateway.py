@@ -11,11 +11,9 @@ import pytz
 
 import requests
 
-from vnpy.api.rest import Request, RestClient, RequestStatus
-from requests import Response
-# from vnpy_rest import RestClient, Request, Response
-#from vnpy_websocket import WebsocketClient
-from vnpy.api.websocket import WebsocketClient
+from vnpy_rest import RestClient, Request, Response
+from vnpy_websocket import WebsocketClient
+from asyncio import run_coroutine_threadsafe
 
 from vnpy.trader.constant import (
     Direction,
@@ -294,52 +292,6 @@ class BitstampRestApi(RestClient):
 
         return request
 
-    def _process_request(
-        self, request: Request, session: requests.Session
-    ):
-        """
-        Bistamp API server does not support keep-alive connection.
-        So when using session.request will cause header related error.
-        Reimplement this method to use requests.request instead.
-        """
-        try:
-            request = self.sign(request)
-
-            url = self.make_full_url(request.path)
-
-            response = requests.request(
-                request.method,
-                url,
-                headers=request.headers,
-                params=request.params,
-                data=request.data,
-                proxies=self.proxies,
-            )
-            request.response = response
-            status_code = response.status_code
-            if status_code // 100 == 2:
-                if status_code == 204:
-                    json_body = None
-                else:
-                    json_body = response.json()
-
-                request.callback(json_body, request)
-                request.status = RequestStatus.success
-            else:
-                request.status = RequestStatus.failed
-
-                if request.on_failed:
-                    request.on_failed(status_code, request)
-                else:
-                    self.on_failed(status_code, request)
-        except Exception:
-            request.status = RequestStatus.error
-            t, v, tb = sys.exc_info()
-            if request.on_error:
-                request.on_error(t, v, tb, request)
-            else:
-                self.on_error(t, v, tb, request)
-
     def query_order(self) -> None:
         """查询未成交委托"""
         self.add_request(
@@ -617,7 +569,8 @@ class BitstampWebsocketApi(WebsocketClient):
         elif "order_" in event:
             self.on_market_order(packet)
         elif event == "bts:request_reconnect":
-            self._disconnect()
+            coro = self._ws.close()
+            run_coroutine_threadsafe(coro, self._loop)
 
     def on_market_trade(self, packet: dict) -> None:
         """成交信息推送"""
