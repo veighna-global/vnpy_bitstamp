@@ -584,6 +584,7 @@ class BitstampWebsocketApi(WebsocketClient):
 
         dt: datetime = datetime.fromtimestamp(int(data["timestamp"]))
         tick.datetime = UTC_TZ.localize(dt)
+        tick.localtime = datetime.now()
 
         self.gateway.on_tick(copy(tick))
 
@@ -642,6 +643,7 @@ class BitstampWebsocketApi(WebsocketClient):
             tick.__setattr__(f"ask_price_{ix}", float(ask_price))
             tick.__setattr__(f"ask_volume_{ix}", float(ask_volume))
 
+        tick.localtime = datetime.now()
         self.gateway.on_tick(copy(tick))
 
     def on_market_order(self, packet:dict) -> None:
