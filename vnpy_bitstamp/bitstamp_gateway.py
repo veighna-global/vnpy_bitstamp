@@ -69,11 +69,11 @@ TIMEDELTA_MAP: Dict[Interval, timedelta] = {
     Interval.DAILY: timedelta(days=1),
 }
 
-# 合约品种全局缓存字典
-symbol_name_map: Dict[str, str] = {}
-
 # 合约名称全局缓存字典
 name_symbol_map: Dict[str, str] = {}
+
+# 合约数据全局缓存字典
+symbol_contract_map: Dict[str, ContractData] = {}
 
 
 class BitstampGateway(BaseGateway):
@@ -428,7 +428,7 @@ class BitstampRestApi(RestClient):
             )
             self.gateway.on_contract(contract)
 
-            symbol_name_map[contract.symbol] = contract.name
+            symbol_contract_map[contract.symbol] = contract
             name_symbol_map[contract.name] = contract.symbol
 
         self.gateway.write_log("合约信息查询成功")
@@ -530,6 +530,10 @@ class BitstampWebsocketApi(WebsocketClient):
 
     def subscribe(self, req: SubscribeRequest) -> None:
         """订阅行情"""
+        if req.symbol not in symbol_contract_map:
+            self.gateway.write_log(f"找不到该合约代码{req.symbol}")
+            return
+
         # 缓存订阅记录
         self.subscribed[req.symbol] = req
         if not self._active:
@@ -538,7 +542,7 @@ class BitstampWebsocketApi(WebsocketClient):
         # 创建TICK对象
         tick: TickData = TickData(
             symbol=req.symbol,
-            name=symbol_name_map.get(req.symbol, ""),
+            name=symbol_contract_map[req.symbol].name,
             exchange=Exchange.BITSTAMP,
             datetime=datetime.now(UTC_TZ),
             gateway_name=self.gateway_name,
