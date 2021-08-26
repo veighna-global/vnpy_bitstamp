@@ -69,8 +69,11 @@ TIMEDELTA_MAP: Dict[Interval, timedelta] = {
     Interval.DAILY: timedelta(days=1),
 }
 
-symbol_name_map = {}
-name_symbol_map = {}
+# 合约品种全局缓存字典
+symbol_name_map: Dict[str, str] = {}
+
+# 合约名称全局缓存字典
+name_symbol_map: Dict[str, str] = {}
 
 
 class BitstampGateway(BaseGateway):
@@ -496,9 +499,7 @@ class BitstampRestApi(RestClient):
         msg: str = f"触发异常，状态码：{exception_type}，信息：{exception_value}"
         self.gateway.write_log(msg)
 
-        sys.stderr.write(
-            self.exception_detail(exception_type, exception_value, tb, request)
-        )
+        super().on_error(exception_type, exception_value, tb, request)
 
 
 class BitstampWebsocketApi(WebsocketClient):
