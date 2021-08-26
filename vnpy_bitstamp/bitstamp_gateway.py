@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import sys
 import time
 import uuid
 from copy import copy
