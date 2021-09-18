@@ -39,6 +39,7 @@ from vnpy.trader.object import (
 from vnpy.trader.event import EVENT_TIMER
 from vnpy.event import Event, EventEngine
 
+
 # UTC时区
 UTC_TZ = pytz.utc
 
@@ -221,7 +222,7 @@ class BitstampRestApi(RestClient):
         self.order_manager: LocalOrderManager = gateway.order_manager
 
         self.key: str = ""
-        self.secret: str  = ""
+        self.secret: str = ""
 
         self.order_count: int = 1000000
         self.connect_time: int = 0
@@ -649,7 +650,7 @@ class BitstampWebsocketApi(WebsocketClient):
         tick.localtime = datetime.now()
         self.gateway.on_tick(copy(tick))
 
-    def on_market_order(self, packet:dict) -> None:
+    def on_market_order(self, packet: dict) -> None:
         """委托信息推送"""
         event: str = packet["event"]
         data: dict = packet["data"]
